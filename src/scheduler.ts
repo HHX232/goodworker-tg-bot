@@ -108,15 +108,16 @@ async function sendPaymentReminders(telegram: Telegram): Promise<void> {
   console.log(`[scheduler] Found ${rows.length} student(s) due for a payment reminder`)
 
   for (const row of rows) {
-    const currency = row.currency ?? ''
+    const totalsText = row.totals.length > 0
+      ? row.totals.map(t => `${t.amount} ${t.currency}`).join(' + ')
+      : '0'
 
     if (row.studentTgId) {
       const lang = getLang(row.studentLang)
       const text = T.paymentReminderStudent[lang]({
         teacherName: row.teacherName,
         unpaidCount: row.unpaidCount,
-        totalOwed: row.totalOwed,
-        currency,
+        totalsText,
       })
       await telegram.sendMessage(row.studentTgId, text, { parse_mode: 'Markdown' }).catch(err => {
         console.error(`[scheduler] Failed to send payment reminder to student: ${err.message}`)
@@ -128,8 +129,7 @@ async function sendPaymentReminders(telegram: Telegram): Promise<void> {
       const text = T.paymentReminderTeacher[lang]({
         studentName: row.studentName,
         unpaidCount: row.unpaidCount,
-        totalOwed: row.totalOwed,
-        currency,
+        totalsText,
       })
       await telegram.sendMessage(row.teacherTgId, text, { parse_mode: 'Markdown' }).catch(err => {
         console.error(`[scheduler] Failed to notify teacher of payment reminder: ${err.message}`)

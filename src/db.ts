@@ -142,39 +142,84 @@ export interface PaymentReminderRow {
   studentLang: string
   studentTgId: string | null
   unpaidCount: number
-  totalOwed: number
-  currency: string | null
+  // Grouped by currency rather than summed — a student can in principle owe
+  // for lessons priced in different currencies.
+  totals: { currency: string; amount: number }[]
 }
 
-// Students whose unpaid confirmed-booking count has reached (or grown past) the
-// teacher's configured "remind every N lessons" cadence, and haven't already been
+// Students whose unpaid lesson count has reached (or grown past) the teacher's
+// configured "remind every N lessons" cadence, and haven't already been
 // notified for this exact count (avoids re-sending the same reminder every day).
+//
+// "Unpaid lesson" is counted from every place a billable lesson can come from —
+// mirrors isBillableEvent in src/shared/helpers/calendar/eventBilling.ts:
+//   1. confirmed ServiceBooking rows (the public "book a service" flow)
+//   2. calendar events with a service attached — manually scheduled, edited, or
+//      created via the calendar's "repeat" option (stored as JSON on
+//      Teacher.calendar.events); "booking-*" ids are skipped there since they're
+//      already counted via their ServiceBooking row (avoids double-counting).
 export async function getStudentsNeedingPaymentReminder(): Promise<PaymentReminderRow[]> {
-  const res = await pool.query<PaymentReminderRow>(`
-    WITH unpaid AS (
+  const res = await pool.query<Omit<PaymentReminderRow, 'totals'> & { totals: PaymentReminderRow['totals'] | null }>(`
+    WITH calendar_events AS (
+      SELECT t.id AS "teacherId", elem
+      FROM "Teacher" t,
+           LATERAL jsonb_array_elements(COALESCE(t.calendar -> 'events', '[]'::jsonb)) AS elem
+    ),
+    all_unpaid AS (
       SELECT sv."teacherId" AS "teacherId", sb."studentId" AS "studentId",
-             COUNT(*)::int AS "unpaidCount", SUM(sb."finalPrice") AS "totalOwed",
-             MAX(sv.currency) AS currency
+             sv.currency AS currency, sb."finalPrice" AS amount
       FROM "ServiceBooking" sb
       JOIN "Service" sv ON sv.id = sb."serviceId"
       WHERE sb.status = 'CONFIRMED' AND sb."paidAt" IS NULL
-      GROUP BY sv."teacherId", sb."studentId"
+
+      UNION ALL
+
+      SELECT "teacherId", (elem ->> 'studentId') AS "studentId",
+             (elem ->> 'serviceCurrency') AS currency,
+             ROUND(
+               (elem ->> 'servicePrice')::numeric *
+               COALESCE((elem ->> 'durationMinutes')::numeric, 60) /
+               (elem ->> 'serviceDurationMinutes')::numeric
+             ) AS amount
+      FROM calendar_events
+      WHERE elem ->> 'serviceId' IS NOT NULL
+        AND elem ->> 'servicePrice' IS NOT NULL
+        AND elem ->> 'serviceDurationMinutes' IS NOT NULL
+        AND elem ->> 'studentId' IS NOT NULL
+        AND COALESCE(elem ->> 'status', 'scheduled') != 'cancelled'
+        AND (elem ->> 'id') NOT LIKE 'booking-%'
+        AND COALESCE((elem ->> 'paid')::boolean, false) = false
+    ),
+    counts AS (
+      SELECT "teacherId", "studentId", COUNT(*)::int AS "unpaidCount"
+      FROM all_unpaid
+      GROUP BY "teacherId", "studentId"
+    ),
+    totals AS (
+      SELECT "teacherId", "studentId",
+             json_agg(json_build_object('currency', currency, 'amount', amount_sum)) AS totals
+      FROM (
+        SELECT "teacherId", "studentId", currency, SUM(amount) AS amount_sum
+        FROM all_unpaid
+        GROUP BY "teacherId", "studentId", currency
+      ) per_currency
+      GROUP BY "teacherId", "studentId"
     )
     SELECT
       prs."teacherId", prs."studentId", prs."everyNLessons",
       t.name AS "teacherName", t."langCode" AS "teacherLang", t."telegramChatId"::text AS "teacherTgId",
       s.name AS "studentName", s."langCode" AS "studentLang", s."telegramChatId"::text AS "studentTgId",
-      COALESCE(u."unpaidCount", 0) AS "unpaidCount",
-      COALESCE(u."totalOwed", 0) AS "totalOwed",
-      u.currency
+      COALESCE(c."unpaidCount", 0) AS "unpaidCount",
+      tot.totals AS totals
     FROM "PaymentReminderSetting" prs
     JOIN "Teacher" t ON t.id = prs."teacherId"
     JOIN "Student" s ON s.id = prs."studentId"
-    LEFT JOIN unpaid u ON u."teacherId" = prs."teacherId" AND u."studentId" = prs."studentId"
-    WHERE COALESCE(u."unpaidCount", 0) >= prs."everyNLessons"
-      AND COALESCE(u."unpaidCount", 0) != prs."lastRemindedUnpaidCount"
+    LEFT JOIN counts c ON c."teacherId" = prs."teacherId" AND c."studentId" = prs."studentId"
+    LEFT JOIN totals tot ON tot."teacherId" = prs."teacherId" AND tot."studentId" = prs."studentId"
+    WHERE COALESCE(c."unpaidCount", 0) >= prs."everyNLessons"
+      AND COALESCE(c."unpaidCount", 0) != prs."lastRemindedUnpaidCount"
   `)
-  return res.rows
+  return res.rows.map(r => ({ ...r, totals: r.totals ?? [] }))
 }
 
 export async function markPaymentReminderSent(teacherId: string, studentId: string, unpaidCount: number): Promise<void> {

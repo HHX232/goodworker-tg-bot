@@ -37,15 +37,14 @@ interface TeacherReminderVars {
 interface PaymentReminderStudentVars {
   teacherName: string
   unpaidCount: number
-  totalOwed: number
-  currency: string
+  /** Pre-formatted, e.g. "1000 RUB" or "1000 RUB + 190 BYN" if mixed currencies */
+  totalsText: string
 }
 
 interface PaymentReminderTeacherVars {
   studentName: string
   unpaidCount: number
-  totalOwed: number
-  currency: string
+  totalsText: string
 }
 
 export const T = {
@@ -150,44 +149,44 @@ export const T = {
   },
 
   paymentReminderStudent: {
-    ru: ({ teacherName, unpaidCount, totalOwed, currency }: PaymentReminderStudentVars) =>
+    ru: ({ teacherName, unpaidCount, totalsText }: PaymentReminderStudentVars) =>
       `💰 *Напоминание об оплате*\n\n` +
       `У вас накопилось ${unpaidCount} неоплаченных занятий с репетитором ${teacherName}.\n` +
-      `Сумма к оплате: *${totalOwed} ${currency}*\n\n` +
+      `Сумма к оплате: *${totalsText}*\n\n` +
       `Пожалуйста, свяжитесь с репетитором для оплаты.`,
-    en: ({ teacherName, unpaidCount, totalOwed, currency }: PaymentReminderStudentVars) =>
+    en: ({ teacherName, unpaidCount, totalsText }: PaymentReminderStudentVars) =>
       `💰 *Payment reminder*\n\n` +
       `You have ${unpaidCount} unpaid lesson(s) with tutor ${teacherName}.\n` +
-      `Amount due: *${totalOwed} ${currency}*\n\n` +
+      `Amount due: *${totalsText}*\n\n` +
       `Please reach out to your tutor to settle the payment.`,
-    hi: ({ teacherName, unpaidCount, totalOwed, currency }: PaymentReminderStudentVars) =>
+    hi: ({ teacherName, unpaidCount, totalsText }: PaymentReminderStudentVars) =>
       `💰 *भुगतान अनुस्मारक*\n\n` +
       `शिक्षक ${teacherName} के साथ आपके ${unpaidCount} पाठों का भुगतान बाकी है।\n` +
-      `देय राशि: *${totalOwed} ${currency}*\n\n` +
+      `देय राशि: *${totalsText}*\n\n` +
       `कृपया भुगतान के लिए अपने शिक्षक से संपर्क करें।`,
-    zh: ({ teacherName, unpaidCount, totalOwed, currency }: PaymentReminderStudentVars) =>
+    zh: ({ teacherName, unpaidCount, totalsText }: PaymentReminderStudentVars) =>
       `💰 *付款提醒*\n\n` +
       `您与教师 ${teacherName} 有 ${unpaidCount} 节课尚未付款。\n` +
-      `应付金额：*${totalOwed} ${currency}*\n\n` +
+      `应付金额：*${totalsText}*\n\n` +
       `请联系您的教师完成付款。`,
   },
 
   paymentReminderTeacher: {
-    ru: ({ studentName, unpaidCount, totalOwed, currency }: PaymentReminderTeacherVars) =>
+    ru: ({ studentName, unpaidCount, totalsText }: PaymentReminderTeacherVars) =>
       `💰 *Напоминание об оплате*\n\n` +
-      `Ученик ${studentName}: ${unpaidCount} неоплаченных занятий на сумму *${totalOwed} ${currency}*.\n\n` +
+      `Ученик ${studentName}: ${unpaidCount} неоплаченных занятий на сумму *${totalsText}*.\n\n` +
       `Ученику отправлено напоминание.`,
-    en: ({ studentName, unpaidCount, totalOwed, currency }: PaymentReminderTeacherVars) =>
+    en: ({ studentName, unpaidCount, totalsText }: PaymentReminderTeacherVars) =>
       `💰 *Payment reminder*\n\n` +
-      `Student ${studentName}: ${unpaidCount} unpaid lesson(s) totaling *${totalOwed} ${currency}*.\n\n` +
+      `Student ${studentName}: ${unpaidCount} unpaid lesson(s) totaling *${totalsText}*.\n\n` +
       `A reminder was sent to the student.`,
-    hi: ({ studentName, unpaidCount, totalOwed, currency }: PaymentReminderTeacherVars) =>
+    hi: ({ studentName, unpaidCount, totalsText }: PaymentReminderTeacherVars) =>
       `💰 *भुगतान अनुस्मारक*\n\n` +
-      `छात्र ${studentName}: ${unpaidCount} पाठ बकाया, कुल *${totalOwed} ${currency}*।\n\n` +
+      `छात्र ${studentName}: ${unpaidCount} पाठ बकाया, कुल *${totalsText}*।\n\n` +
       `छात्र को अनुस्मारक भेज दिया गया है।`,
-    zh: ({ studentName, unpaidCount, totalOwed, currency }: PaymentReminderTeacherVars) =>
+    zh: ({ studentName, unpaidCount, totalsText }: PaymentReminderTeacherVars) =>
       `💰 *付款提醒*\n\n` +
-      `学生 ${studentName}：${unpaidCount} 节课未付款，共计 *${totalOwed} ${currency}*。\n\n` +
+      `学生 ${studentName}：${unpaidCount} 节课未付款，共计 *${totalsText}*。\n\n` +
       `已向学生发送提醒。`,
   },
 }
