@@ -121,3 +121,86 @@ export async function getUpcomingConferences(from: Date, to: Date): Promise<Conf
 
   return res.rows
 }
+
+export interface HomeworkReminderRow {
+  assignmentId: string
+  homeworkTitle: string
+  dueAt: Date
+  studentName: string
+  studentTgId: string
+  studentLang: string
+}
+
+export interface PaymentReminderRow {
+  teacherId: string
+  studentId: string
+  everyNLessons: number
+  teacherName: string
+  teacherLang: string
+  teacherTgId: string | null
+  studentName: string
+  studentLang: string
+  studentTgId: string | null
+  unpaidCount: number
+  totalOwed: number
+  currency: string | null
+}
+
+// Students whose unpaid confirmed-booking count has reached (or grown past) the
+// teacher's configured "remind every N lessons" cadence, and haven't already been
+// notified for this exact count (avoids re-sending the same reminder every day).
+export async function getStudentsNeedingPaymentReminder(): Promise<PaymentReminderRow[]> {
+  const res = await pool.query<PaymentReminderRow>(`
+    WITH unpaid AS (
+      SELECT sv."teacherId" AS "teacherId", sb."studentId" AS "studentId",
+             COUNT(*)::int AS "unpaidCount", SUM(sb."finalPrice") AS "totalOwed",
+             MAX(sv.currency) AS currency
+      FROM "ServiceBooking" sb
+      JOIN "Service" sv ON sv.id = sb."serviceId"
+      WHERE sb.status = 'CONFIRMED' AND sb."paidAt" IS NULL
+      GROUP BY sv."teacherId", sb."studentId"
+    )
+    SELECT
+      prs."teacherId", prs."studentId", prs."everyNLessons",
+      t.name AS "teacherName", t."langCode" AS "teacherLang", t."telegramChatId"::text AS "teacherTgId",
+      s.name AS "studentName", s."langCode" AS "studentLang", s."telegramChatId"::text AS "studentTgId",
+      COALESCE(u."unpaidCount", 0) AS "unpaidCount",
+      COALESCE(u."totalOwed", 0) AS "totalOwed",
+      u.currency
+    FROM "PaymentReminderSetting" prs
+    JOIN "Teacher" t ON t.id = prs."teacherId"
+    JOIN "Student" s ON s.id = prs."studentId"
+    LEFT JOIN unpaid u ON u."teacherId" = prs."teacherId" AND u."studentId" = prs."studentId"
+    WHERE COALESCE(u."unpaidCount", 0) >= prs."everyNLessons"
+      AND COALESCE(u."unpaidCount", 0) != prs."lastRemindedUnpaidCount"
+  `)
+  return res.rows
+}
+
+export async function markPaymentReminderSent(teacherId: string, studentId: string, unpaidCount: number): Promise<void> {
+  await pool.query(
+    `UPDATE "PaymentReminderSetting" SET "lastRemindedUnpaidCount" = $1, "updatedAt" = NOW() WHERE "teacherId" = $2 AND "studentId" = $3`,
+    [unpaidCount, teacherId, studentId]
+  )
+}
+
+export async function getUpcomingHomeworkAssignments(from: Date, to: Date): Promise<HomeworkReminderRow[]> {
+  const res = await pool.query<HomeworkReminderRow>(`
+    SELECT
+      ha.id AS "assignmentId",
+      h.title AS "homeworkTitle",
+      h."dueAt",
+      s.name AS "studentName",
+      s."telegramChatId"::text AS "studentTgId",
+      s."langCode" AS "studentLang"
+    FROM "HomeworkAssignment" ha
+    JOIN "Homework" h ON ha."homeworkId" = h.id
+    JOIN "Student" s ON ha."studentId" = s.id
+    WHERE h."dueAt" >= $1
+      AND h."dueAt" < $2
+      AND ha.status NOT IN ('SUBMITTED', 'REVIEWED')
+      AND s."telegramChatId" IS NOT NULL
+    ORDER BY h."dueAt"
+  `, [from, to])
+  return res.rows
+}

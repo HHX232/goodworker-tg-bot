@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { Telegram } from 'telegraf'
-import { getUpcomingConferences } from './db'
+import { getUpcomingConferences, getUpcomingHomeworkAssignments, getStudentsNeedingPaymentReminder, markPaymentReminderSent } from './db'
 import { T, getLang, formatDate, formatTime } from './messages'
 
 // Build the UTC window for "tomorrow" (configurable offset)
@@ -72,6 +72,76 @@ async function sendReminders(telegram: Telegram, hoursBefore: number): Promise<v
   console.log(`[scheduler] Done. Sent ${sent.size} notification(s).`)
 }
 
+async function sendHomeworkReminders(telegram: Telegram, hoursBefore: number): Promise<void> {
+  const now = new Date()
+  const from = new Date(now.getTime() + (hoursBefore - 1) * 60 * 60 * 1000)
+  const to = new Date(now.getTime() + (hoursBefore + 1) * 60 * 60 * 1000)
+  console.log(`[scheduler] Checking homework due between ${from.toISOString()} and ${to.toISOString()}`)
+
+  const assignments = await getUpcomingHomeworkAssignments(from, to)
+  console.log(`[scheduler] Found ${assignments.length} homework assignment(s) due soon`)
+
+  const sent = new Set<string>()
+  for (const a of assignments) {
+    if (sent.has(a.assignmentId)) continue
+    sent.add(a.assignmentId)
+
+    const lang = getLang(a.studentLang)
+    const due = new Date(a.dueAt)
+    const text = lang === 'ru'
+      ? `📚 *Напоминание о домашнем задании*\n\n«${a.homeworkTitle}»\n\nСдать до: ${formatDate(due, lang)} в ${formatTime(due, lang)}\n\nНе забудьте выполнить домашнее задание!`
+      : `📚 *Homework reminder*\n\n«${a.homeworkTitle}»\n\nDue: ${formatDate(due, lang)} at ${formatTime(due, lang)}\n\nDon't forget to complete your homework!`
+
+    await telegram.sendMessage(a.studentTgId, text, { parse_mode: 'Markdown' }).catch((err: Error) => {
+      console.error(`[scheduler] Failed to send homework reminder to student: ${err.message}`)
+    })
+  }
+
+  console.log(`[scheduler] Done. Sent ${sent.size} homework reminder(s).`)
+}
+
+// Two-sided: notifies both the student (please pay) and the teacher (reminder sent)
+// once a student's unpaid confirmed-booking count reaches the teacher's configured
+// "remind every N lessons" cadence (set via the calendar's payment reminder modal).
+async function sendPaymentReminders(telegram: Telegram): Promise<void> {
+  const rows = await getStudentsNeedingPaymentReminder()
+  console.log(`[scheduler] Found ${rows.length} student(s) due for a payment reminder`)
+
+  for (const row of rows) {
+    const currency = row.currency ?? ''
+
+    if (row.studentTgId) {
+      const lang = getLang(row.studentLang)
+      const text = T.paymentReminderStudent[lang]({
+        teacherName: row.teacherName,
+        unpaidCount: row.unpaidCount,
+        totalOwed: row.totalOwed,
+        currency,
+      })
+      await telegram.sendMessage(row.studentTgId, text, { parse_mode: 'Markdown' }).catch(err => {
+        console.error(`[scheduler] Failed to send payment reminder to student: ${err.message}`)
+      })
+    }
+
+    if (row.teacherTgId) {
+      const lang = getLang(row.teacherLang)
+      const text = T.paymentReminderTeacher[lang]({
+        studentName: row.studentName,
+        unpaidCount: row.unpaidCount,
+        totalOwed: row.totalOwed,
+        currency,
+      })
+      await telegram.sendMessage(row.teacherTgId, text, { parse_mode: 'Markdown' }).catch(err => {
+        console.error(`[scheduler] Failed to notify teacher of payment reminder: ${err.message}`)
+      })
+    }
+
+    await markPaymentReminderSent(row.teacherId, row.studentId, row.unpaidCount)
+  }
+
+  console.log(`[scheduler] Done. Processed ${rows.length} payment reminder(s).`)
+}
+
 export function startScheduler(telegram: Telegram): void {
   const hour = parseInt(process.env.NOTIFY_HOUR ?? '9', 10)
   const hoursBefore = parseInt(process.env.NOTIFY_HOURS_BEFORE ?? '24', 10)
@@ -83,6 +153,12 @@ export function startScheduler(telegram: Telegram): void {
   cron.schedule(expression, () => {
     sendReminders(telegram, hoursBefore).catch(err => {
       console.error('[scheduler] Unhandled error:', err)
+    })
+    sendHomeworkReminders(telegram, hoursBefore).catch(err => {
+      console.error('[scheduler] Homework reminders error:', err)
+    })
+    sendPaymentReminders(telegram).catch(err => {
+      console.error('[scheduler] Payment reminders error:', err)
     })
   }, { timezone: 'UTC' })
 }
