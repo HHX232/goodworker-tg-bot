@@ -1,4 +1,5 @@
 import { Pool } from 'pg'
+import { randomUUID } from 'crypto'
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -226,6 +227,21 @@ export async function markPaymentReminderSent(teacherId: string, studentId: stri
   await pool.query(
     `UPDATE "PaymentReminderSetting" SET "lastRemindedUnpaidCount" = $1, "updatedAt" = NOW() WHERE "teacherId" = $2 AND "studentId" = $3`,
     [unpaidCount, teacherId, studentId]
+  )
+}
+
+// In-app notification for the student — separate from (and in addition to) the
+// Telegram message, and always created regardless of whether Telegram is even
+// linked. "PAYMENT_REMINDER" is intentionally not part of the main app's
+// NOTIFICATION_TYPES catalog, so it never shows up as a toggle in notification
+// settings — the student can't turn it off.
+export async function createPaymentReminderNotification(
+  studentId: string, title: string, body: string, payload: Record<string, unknown>
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO "Notification" (id, type, title, body, payload, "isRead", "studentId", "createdAt")
+     VALUES ($1, 'PAYMENT_REMINDER', $2, $3, $4::jsonb, false, $5, NOW())`,
+    [randomUUID(), title, body, JSON.stringify(payload), studentId]
   )
 }
 

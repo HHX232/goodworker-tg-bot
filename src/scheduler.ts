@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { Telegram } from 'telegraf'
-import { getUpcomingConferences, getUpcomingHomeworkAssignments, getStudentsNeedingPaymentReminder, markPaymentReminderSent } from './db'
+import { getUpcomingConferences, getUpcomingHomeworkAssignments, getStudentsNeedingPaymentReminder, markPaymentReminderSent, createPaymentReminderNotification } from './db'
 import { T, getLang, formatDate, formatTime } from './messages'
 
 // Build the UTC window for "tomorrow" (configurable offset)
@@ -111,6 +111,17 @@ async function sendPaymentReminders(telegram: Telegram): Promise<void> {
     const totalsText = row.totals.length > 0
       ? row.totals.map(t => `${t.amount} ${t.currency}`).join(' + ')
       : '0'
+
+    // In-app notification — always created, independent of Telegram being
+    // linked at all, so this reminder always reaches the student somehow.
+    await createPaymentReminderNotification(
+      row.studentId,
+      'Напоминание об оплате',
+      `У вас накопилось ${row.unpaidCount} неоплаченных занятий с репетитором ${row.teacherName}. Сумма к оплате: ${totalsText}.`,
+      { teacherName: row.teacherName, unpaidCount: row.unpaidCount, totals: row.totals }
+    ).catch(err => {
+      console.error(`[scheduler] Failed to create in-app payment reminder notification: ${err.message}`)
+    })
 
     if (row.studentTgId) {
       const lang = getLang(row.studentLang)
