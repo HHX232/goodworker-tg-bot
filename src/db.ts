@@ -245,6 +245,34 @@ export async function createPaymentReminderNotification(
   )
 }
 
+// Chat event card companion to `createPaymentReminderNotification` above (R15,
+// ticket 05) — same checkpoint moment, third side effect. Get-or-create the
+// teacher↔student `Conversation` (raw SQL, same `pg` pool as everything else
+// in this file — the main app's Prisma `access.ts` isn't reachable from
+// tg-bot) via `ON CONFLICT` on the `(teacherId, studentId)` unique index
+// (mirrors `POST /api/chat/conversations`'s `upsert`), bumping
+// `lastMessageAt` either way so the new card surfaces at the top of the
+// list, then insert a `ChatMessage` with `eventType: 'PAYMENT_REMINDER'` and
+// the same `payload` already used for the Telegram/notification text.
+export async function createPaymentReminderChatCard(
+  teacherId: string, studentId: string, payload: Record<string, unknown>
+): Promise<void> {
+  const convRes = await pool.query<{ id: string }>(
+    `INSERT INTO "Conversation" (id, "teacherId", "studentId", "createdAt", "lastMessageAt")
+     VALUES ($1, $2, $3, NOW(), NOW())
+     ON CONFLICT ("teacherId", "studentId") DO UPDATE SET "lastMessageAt" = NOW()
+     RETURNING id`,
+    [randomUUID(), teacherId, studentId]
+  )
+  const conversationId = convRes.rows[0].id
+
+  await pool.query(
+    `INSERT INTO "ChatMessage" (id, "conversationId", "senderRole", "eventType", "eventPayload", "isRead", "createdAt")
+     VALUES ($1, $2, 'TEACHER', 'PAYMENT_REMINDER', $3::jsonb, false, NOW())`,
+    [randomUUID(), conversationId, JSON.stringify(payload)]
+  )
+}
+
 export async function getUpcomingHomeworkAssignments(from: Date, to: Date): Promise<HomeworkReminderRow[]> {
   const res = await pool.query<HomeworkReminderRow>(`
     SELECT

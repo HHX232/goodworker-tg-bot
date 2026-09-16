@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { Telegram } from 'telegraf'
-import { getUpcomingConferences, getUpcomingHomeworkAssignments, getStudentsNeedingPaymentReminder, markPaymentReminderSent, createPaymentReminderNotification } from './db'
+import { getUpcomingConferences, getUpcomingHomeworkAssignments, getStudentsNeedingPaymentReminder, markPaymentReminderSent, createPaymentReminderNotification, createPaymentReminderChatCard } from './db'
 import { T, getLang, formatDate, formatTime } from './messages'
 
 // Build the UTC window for "tomorrow" (configurable offset)
@@ -121,6 +121,15 @@ async function sendPaymentReminders(telegram: Telegram): Promise<void> {
       { teacherName: row.teacherName, unpaidCount: row.unpaidCount, totals: row.totals }
     ).catch(err => {
       console.error(`[scheduler] Failed to create in-app payment reminder notification: ${err.message}`)
+    })
+
+    // Chat event card (R15) — same payload as the notification/Telegram text above.
+    await createPaymentReminderChatCard(
+      row.teacherId,
+      row.studentId,
+      { teacherName: row.teacherName, unpaidCount: row.unpaidCount, totals: row.totals }
+    ).catch(err => {
+      console.error(`[scheduler] Failed to create payment reminder chat card: ${err.message}`)
     })
 
     if (row.studentTgId) {
